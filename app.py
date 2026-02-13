@@ -1,4 +1,5 @@
 import json
+import math
 import pathlib
 from datetime import date
 
@@ -18,76 +19,88 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# Custom CSS
+# Custom CSS – nur noch für Detail-Abschnitte, kein HTML in Kacheln mehr
 # ---------------------------------------------------------------------------
-st.markdown(
-    """
-    <style>
-    /* Dark Mode deaktivieren - Settings-Button ausblenden */
-    button[title="Settings"] {display: none !important;}
-    button[kind="header"] {display: none !important;}
-    /* Footer ausblenden */
-    footer {visibility: hidden;}
-    
-    /* Kachel-Stil */
-    div.stColumn > div {
-        padding: 0.25rem;
-    }
-    .card {
-        background: var(--secondary-background-color, #f0f2f6);
-        border-radius: 12px;
-        padding: 1.25rem;
-        margin-bottom: 0.75rem;
-        border: 1px solid rgba(128,128,128,0.15);
-        transition: box-shadow 0.2s;
-    }
-    .card:hover {
-        box-shadow: 0 4px 16px rgba(0,0,0,0.10);
-    }
-    .card h4 {
-        margin: 0 0 0.4rem 0;
-    }
-    .card p {
-        margin: 0.4rem 0;
-        font-size: 0.92rem;
-        line-height: 1.5;
-    }
-    .badge {
-        display: inline-block;
-        padding: 4px 12px;
-        border-radius: 12px;
-        font-size: 0.82rem;
-        font-weight: 600;
-        margin-right: 6px;
-        margin-bottom: 4px;
-    }
-    .badge-green  { background: #c8e6c9; color: #2e7d32; }
-    .badge-red    { background: #ffcdd2; color: #c62828; }
-    .badge-blue   { background: #bbdefb; color: #1565c0; }
-    .metric-row {
-        display: flex;
-        gap: 1rem;
-        flex-wrap: wrap;
-        margin-bottom: 1rem;
-    }
-    .detail-section {
-        background: var(--secondary-background-color, #f0f2f6);
-        border-radius: 12px;
-        padding: 1.5rem;
-        margin-bottom: 1rem;
-    }
-    .detail-section p {
-        margin: 0.5rem 0;
-        line-height: 1.6;
-    }
-    .detail-section h4 {
-        margin-top: 0;
-        margin-bottom: 1rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""<style>
+button[title="Settings"] {display: none !important;}
+button[kind="header"] {display: none !important;}
+footer {visibility: hidden;}
+.detail-section {
+    background: var(--secondary-background-color, #f0f2f6);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+}
+.detail-section p {
+    margin: 0.5rem 0;
+    line-height: 1.6;
+}
+.detail-section h4 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+}
+</style>""", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# Hilfsfunktionen
+# ---------------------------------------------------------------------------
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Berechnet die Entfernung zwischen zwei Koordinaten in Kilometern."""
+    R = 6371
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
+    c = 2 * math.asin(math.sqrt(a))
+    return R * c
+
+
+def render_card(heim):
+    """Rendert eine Kachel mit nativen Streamlit-Komponenten."""
+    with st.container(border=True):
+        st.subheader(heim["name"], divider="blue")
+
+        # Ort
+        st.markdown(f"📍 **{heim['stadt']}**, {heim['bundesland']}")
+        if "distance_km" in heim and pd.notna(heim.get("distance_km")):
+            st.caption(f"🧭 {heim['distance_km']:.1f} km entfernt")
+
+        st.divider()
+
+        # Status
+        if heim["freie_plaetze"] > 0:
+            st.markdown(f"✅ **{heim['freie_plaetze']} freie Plätze**")
+        else:
+            st.markdown("❌ **Belegt**")
+        st.markdown(f"🏷️ {heim['betreuungsart']}")
+        if heim.get("inobhutnahme_geeignet"):
+            st.markdown("🚨 Inobhutnahme geeignet")
+
+        st.divider()
+
+        # Details
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(f"📐 **{heim['zimmergroesse_qm']}** m²")
+            st.markdown(f"👤 **{heim['alter_min']}–{heim['alter_max']}** Jahre")
+        with c2:
+            st.markdown(f"📅 ab **{heim['verfuegbar_ab']}**")
+            st.markdown(f"⏱️ **{heim['verfuegbar_monate']}** Monate")
+
+        st.divider()
+
+        st.button(
+            "Details anzeigen",
+            key=f"btn_{heim['id']}",
+            on_click=go_to_detail,
+            args=(heim["id"],),
+            use_container_width=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -100,13 +113,15 @@ def load_data() -> pd.DataFrame:
         records = json.load(f)
     df = pd.DataFrame(records)
     df["verfuegbar_ab"] = pd.to_datetime(df["verfuegbar_ab"]).dt.date
+    for col in ("hilfeform", "aufnahmeart", "schulform_unterstuetzung"):
+        df[col] = df[col].apply(lambda x: x if isinstance(x, list) else [])
     return df
 
 
 df_all = load_data()
 
 # ---------------------------------------------------------------------------
-# Session-State initialisieren
+# Session-State
 # ---------------------------------------------------------------------------
 if "selected_id" not in st.session_state:
     st.session_state.selected_id = None
@@ -132,61 +147,151 @@ with st.sidebar:
         "https://placehold.co/280x80/2196F3/white?text=Jugendheim+Vermittlung",
         use_container_width=True,
     )
-    st.markdown("## Filter")
 
-    # Bundesland
-    bundeslaender = sorted(df_all["bundesland"].unique())
-    sel_bundesland = st.multiselect(
-        "Bundesland", bundeslaender, default=[], key="filter_bundesland"
+    # ===== SCHNELLFILTER =====
+    st.header("Schnellfilter")
+
+    # -- Verfügbarkeit --
+    nur_frei_jetzt = st.checkbox("Nur freie Plätze", value=True, key="f_frei")
+
+    verfuegbar_ab_filter = st.date_input(
+        "Frei ab", value=None, min_value=date.today(), key="f_ab"
     )
-
-    # Betreuungsart
-    betreuungsarten = sorted(df_all["betreuungsart"].unique())
-    sel_betreuungsart = st.multiselect(
-        "Betreuungsart", betreuungsarten, default=[], key="filter_betreuungsart"
-    )
-
-    # Altersgruppe
-    alter_range = st.slider(
-        "Altersgruppe",
-        min_value=int(df_all["alter_min"].min()),
-        max_value=int(df_all["alter_max"].max()),
-        value=(int(df_all["alter_min"].min()), int(df_all["alter_max"].max())),
-        key="filter_alter",
-    )
-
-    # Zimmergroesse
-    min_zimmer = st.slider(
-        "Mindest-Zimmergröße (m²)",
-        min_value=int(df_all["zimmergroesse_qm"].min()),
-        max_value=int(df_all["zimmergroesse_qm"].max()),
-        value=int(df_all["zimmergroesse_qm"].min()),
-        key="filter_zimmer",
-    )
-
-    # Verfuegbarkeit (Dauer)
     min_monate = st.slider(
-        "Mindest-Verfügbarkeit (Monate)",
-        min_value=1,
-        max_value=int(df_all["verfuegbar_monate"].max()),
-        value=1,
-        key="filter_monate",
+        "Min. Verfügbarkeit (Monate)", 1,
+        int(df_all["verfuegbar_monate"].max()), 1, key="f_mon",
     )
 
-    # Nur freie Plaetze
-    nur_frei = st.checkbox("Nur mit freien Plätzen", value=True, key="filter_frei")
+    st.divider()
 
-    st.markdown("---")
-    if st.button("🔄 Filter zurücksetzen"):
-        for k in [
-            "filter_bundesland",
-            "filter_betreuungsart",
-            "filter_alter",
-            "filter_zimmer",
-            "filter_monate",
-            "filter_frei",
-        ]:
-            if k in st.session_state:
+    # -- Ort --
+    bundeslaender = sorted(df_all["bundesland"].unique())
+    sel_bundesland = st.multiselect("Bundesland", bundeslaender, key="f_bl")
+
+    # Landkreis abhängig vom gewählten Bundesland
+    if sel_bundesland:
+        landkreis_options = sorted(
+            df_all[df_all["bundesland"].isin(sel_bundesland)]["landkreis"]
+            .dropna().unique()
+        )
+    else:
+        landkreis_options = sorted(df_all["landkreis"].dropna().unique())
+    sel_landkreis = st.multiselect("Landkreis", landkreis_options, key="f_lk")
+
+    st.divider()
+
+    # -- Alter --
+    alter_range = st.slider(
+        "Alter",
+        int(df_all["alter_min"].min()),
+        int(df_all["alter_max"].max()),
+        (int(df_all["alter_min"].min()), int(df_all["alter_max"].max())),
+        key="f_alter",
+    )
+
+    st.divider()
+
+    # -- Aufnahmeart --
+    inobhutnahme = st.checkbox("Inobhutnahme geeignet", key="f_inob")
+    krisenplatz = st.checkbox("Krisenplatz", key="f_krise")
+    notaufnahme_24_7 = st.checkbox("Notaufnahme 24/7", key="f_not24")
+    sel_aufnahmeart = st.multiselect(
+        "Aufnahmedauer",
+        ["kurzfristig", "mittel", "langfristig"],
+        key="f_aufn",
+    )
+
+    st.divider()
+
+    # ===== ERWEITERTE FILTER =====
+    with st.expander("Erweiterte Filter"):
+        # Hilfeform & Setting
+        st.caption("Hilfeform & Setting")
+        sel_hilfeform = st.multiselect(
+            "Hilfeform",
+            ["stationär", "betreute Wohngruppe", "intensivpädagogisch", "betreutes Wohnen"],
+            key="f_hilfe",
+        )
+        einzelplatz = st.checkbox("Einzelplatz möglich", key="f_einzel")
+        kleingruppe = st.checkbox("Kleingruppe", key="f_klein")
+
+        st.divider()
+
+        # Geschlecht
+        st.caption("Geschlecht (optional)")
+        sel_geschlecht = st.multiselect(
+            "Geschlecht",
+            ["Mädchen", "Jungen", "offen", "divers"],
+            key="f_geschl",
+        )
+
+        st.divider()
+
+        # Ausschluss & Mindestkriterien
+        st.caption("Ausschlusskriterien")
+        keine_gewalt = st.checkbox("Keine Gewaltproblematik", key="f_kgew")
+        keine_sucht = st.checkbox("Keine Suchtthematik", key="f_ksuc")
+        schulbesuch = st.checkbox("Schulbesuch möglich", key="f_schul")
+        schulformen = sorted(set(
+            s for sub in df_all["schulform_unterstuetzung"] for s in sub
+        ))
+        sel_schulform = st.multiselect("Schulform", schulformen, key="f_sf")
+        haustiere = st.checkbox("Haustiere erlaubt", key="f_tier")
+
+        st.divider()
+
+        # Spezialisierungen
+        st.caption("Spezialisierungen")
+        trauma = st.checkbox("Traumapädagogik", key="f_trau")
+        psychiatrie = st.checkbox("Psychiatrienahe Betreuung", key="f_psych")
+        autismus_f = st.checkbox("Autismus", key="f_auti")
+        geistige_beh = st.checkbox("Geistige Behinderung", key="f_geist")
+        koerperlich = st.checkbox("Körperliche Einschränkungen", key="f_koerp")
+        sprachunterstuetzung = st.checkbox("Sprachunterstützung", key="f_sprach")
+
+        st.divider()
+
+        # Personal
+        st.caption("Personal & Betreuung")
+        eins_zu_eins = st.checkbox("1:1 möglich", key="f_11")
+        nachtbereitschaft = st.checkbox("Nachtbereitschaft", key="f_nb")
+        nachtdienst = st.checkbox("Nachtdienst", key="f_nd")
+        deeskalation = st.checkbox("Deeskalationserfahrung", key="f_deesk")
+
+        st.divider()
+
+        # Administrativ
+        st.caption("Träger & Einrichtung")
+        traeger_f = st.multiselect(
+            "Träger",
+            ["öffentlich", "frei gemeinnützig", "privat"],
+            key="f_traeg",
+        )
+        sel_einrichtungstyp = st.multiselect(
+            "Einrichtungstyp",
+            sorted(df_all["einrichtungstyp"].unique()),
+            key="f_etyp",
+        )
+        platz_bestaetigt = st.selectbox(
+            "Platz bestätigt in",
+            ["egal", "24 Stunden", "3 Tagen", "7 Tagen"],
+            key="f_best",
+        )
+
+    # -- Umkreis --
+    with st.expander("Umkreis-Suche"):
+        umkreis_aktiv = st.checkbox("Umkreis aktivieren", key="f_umkr")
+        umkreis_km = st.slider("Umkreis (km)", 5, 500, 100, key="f_umkr_km",
+                               disabled=not umkreis_aktiv)
+        user_lat = st.number_input("Latitude", value=51.1657, format="%.4f",
+                                   key="u_lat", disabled=not umkreis_aktiv)
+        user_lon = st.number_input("Longitude", value=10.4515, format="%.4f",
+                                   key="u_lon", disabled=not umkreis_aktiv)
+
+    st.divider()
+    if st.button("🔄 Alle Filter zurücksetzen"):
+        for k in list(st.session_state.keys()):
+            if k.startswith("f_") or k.startswith("u_"):
                 del st.session_state[k]
         st.rerun()
 
@@ -195,20 +300,101 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 df = df_all.copy()
 
-if sel_bundesland:
-    df = df[df["bundesland"].isin(sel_bundesland)]
-
-if sel_betreuungsart:
-    df = df[df["betreuungsart"].isin(sel_betreuungsart)]
-
-# Altersgruppen-Filter: mindestens Überlappung mit gewähltem Bereich
-df = df[(df["alter_max"] >= alter_range[0]) & (df["alter_min"] <= alter_range[1])]
-
-df = df[df["zimmergroesse_qm"] >= min_zimmer]
+# Verfügbarkeit
+if nur_frei_jetzt:
+    df = df[df["freie_plaetze_jetzt"]]
+if verfuegbar_ab_filter:
+    df = df[df["verfuegbar_ab"] <= verfuegbar_ab_filter]
 df = df[df["verfuegbar_monate"] >= min_monate]
 
-if nur_frei:
-    df = df[df["freie_plaetze"] > 0]
+# Ort
+if sel_bundesland:
+    df = df[df["bundesland"].isin(sel_bundesland)]
+if sel_landkreis:
+    df = df[df["landkreis"].isin(sel_landkreis)]
+
+# Umkreis
+if umkreis_aktiv:
+    df["distance_km"] = df.apply(
+        lambda r: haversine_distance(user_lat, user_lon, r["latitude"], r["longitude"]),
+        axis=1,
+    )
+    df = df[df["distance_km"] <= umkreis_km]
+else:
+    df["distance_km"] = None
+
+# Alter
+df = df[(df["alter_max"] >= alter_range[0]) & (df["alter_min"] <= alter_range[1])]
+
+# Aufnahmeart
+if inobhutnahme:
+    df = df[df["inobhutnahme_geeignet"]]
+if krisenplatz:
+    df = df[df["krisenplatz"]]
+if notaufnahme_24_7:
+    df = df[df["notaufnahme_24_7"]]
+if sel_aufnahmeart:
+    df = df[df["aufnahmeart"].apply(lambda x: any(a in x for a in sel_aufnahmeart))]
+
+# Hilfeform & Setting
+if sel_hilfeform:
+    df = df[df["hilfeform"].apply(lambda x: any(h in x for h in sel_hilfeform))]
+if einzelplatz:
+    df = df[df["einzelplatz_moeglich"]]
+if kleingruppe:
+    df = df[df["kleingruppe"]]
+
+# Geschlecht
+if sel_geschlecht:
+    df = df[df["geschlecht"].isin(sel_geschlecht)]
+
+# Ausschluss
+if keine_gewalt:
+    df = df[df["keine_gewaltproblematik"]]
+if keine_sucht:
+    df = df[df["keine_suchtthematik"]]
+if schulbesuch:
+    df = df[df["schulbesuch_moeglich"]]
+if sel_schulform:
+    df = df[df["schulform_unterstuetzung"].apply(lambda x: any(s in x for s in sel_schulform))]
+if haustiere:
+    df = df[df["haustiere_erlaubt"]]
+
+# Spezialisierungen
+if trauma:
+    df = df[df["traumapaedagogik"]]
+if psychiatrie:
+    df = df[df["psychiatrienahe_betreuung"]]
+if autismus_f:
+    df = df[df["autismus"]]
+if geistige_beh:
+    df = df[df["geistige_behinderung"]]
+if koerperlich:
+    df = df[df["koerperliche_einschraenkungen"]]
+if sprachunterstuetzung:
+    df = df[df["sprachunterstuetzung"]]
+
+# Personal
+if eins_zu_eins:
+    df = df[df["eins_zu_eins_moeglich"]]
+if nachtbereitschaft:
+    df = df[df["nachtbereitschaft"]]
+if nachtdienst:
+    df = df[df["nachtdienst"]]
+if deeskalation:
+    df = df[df["deeskalationserfahrung"]]
+
+# Administrativ
+if traeger_f:
+    df = df[df["traeger"].isin(traeger_f)]
+if sel_einrichtungstyp:
+    df = df[df["einrichtungstyp"].isin(sel_einrichtungstyp)]
+if platz_bestaetigt == "24 Stunden":
+    df = df[df["platz_bestaetigt_24h"]]
+elif platz_bestaetigt == "3 Tagen":
+    df = df[df["platz_bestaetigt_3d"]]
+elif platz_bestaetigt == "7 Tagen":
+    df = df[df["platz_bestaetigt_7d"]]
 
 # ---------------------------------------------------------------------------
 # Seiten-Routing
@@ -228,19 +414,15 @@ if st.session_state.page == "detail" and st.session_state.selected_id is not Non
         st.button("← Zurück zur Übersicht", on_click=go_to_overview)
 
         st.title(heim["name"])
-        st.caption(f'{heim["stadt"]} · {heim["bundesland"]}')
+        st.caption(f'{heim["stadt"]} · {heim["bundesland"]} · {heim.get("landkreis", "")}')
 
-        # Zwei Spalten: Bild + Infos
         col_img, col_info = st.columns([1, 2])
 
         with col_img:
             st.image(heim["bild_url"], use_container_width=True)
-            # Mini-Karte
             m = folium.Map(
                 location=[heim["latitude"], heim["longitude"]],
-                zoom_start=13,
-                width=350,
-                height=250,
+                zoom_start=13, width=350, height=250,
             )
             folium.Marker(
                 [heim["latitude"], heim["longitude"]],
@@ -250,47 +432,55 @@ if st.session_state.page == "detail" and st.session_state.selected_id is not Non
             st_folium(m, width=350, height=250, key="detail_map")
 
         with col_info:
-            st.markdown(
-                f"""
-                <div class="detail-section">
-                <h4>Informationen</h4>
-                <p><strong>Adresse:</strong> {heim['adresse']}</p>
-                <p><strong>Betreuungsart:</strong> {heim['betreuungsart']}</p>
-                <p><strong>Freie Plätze:</strong> {heim['freie_plaetze']}</p>
-                <p><strong>Zimmergröße:</strong> {heim['zimmergroesse_qm']} m²</p>
-                <p><strong>Altersgruppe:</strong> {heim['alter_min']}–{heim['alter_max']} Jahre</p>
-                <p><strong>Verfügbar ab:</strong> {heim['verfuegbar_ab']}</p>
-                <p><strong>Verfügbarkeit:</strong> {heim['verfuegbar_monate']} Monate</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            # Info-Box via native Streamlit
+            with st.container(border=True):
+                st.subheader("Informationen")
+                st.markdown(f"**Adresse:** {heim['adresse']}")
+                st.markdown(f"**Betreuungsart:** {heim['betreuungsart']}")
+                st.markdown(f"**Hilfeform:** {', '.join(heim.get('hilfeform', []))}")
+                st.markdown(f"**Freie Plätze:** {heim['freie_plaetze']}  ({'jetzt verfügbar' if heim.get('freie_plaetze_jetzt') else 'nicht sofort'})")
+                st.markdown(f"**Reservierbar:** {'Ja' if heim.get('reservierbar') else 'Nein'}")
+                st.markdown(f"**Zimmergröße:** {heim['zimmergroesse_qm']} m²")
+                st.markdown(f"**Altersgruppe:** {heim['alter_min']}–{heim['alter_max']} Jahre")
+                st.markdown(f"**Geschlecht:** {heim.get('geschlecht', 'offen')}")
+                st.markdown(f"**Verfügbar ab:** {heim['verfuegbar_ab']}")
+                st.markdown(f"**Verfügbarkeit:** {heim['verfuegbar_monate']} Monate")
+                st.markdown(f"**Aufnahmeart:** {', '.join(heim.get('aufnahmeart', []))}")
+                st.markdown(f"**Inobhutnahme:** {'Ja' if heim.get('inobhutnahme_geeignet') else 'Nein'}")
+                st.markdown(f"**Krisenplatz:** {'Ja' if heim.get('krisenplatz') else 'Nein'}")
+                st.markdown(f"**Notaufnahme 24/7:** {'Ja' if heim.get('notaufnahme_24_7') else 'Nein'}")
 
-            st.markdown(
-                f"""
-                <div class="detail-section">
-                <h4>Beschreibung</h4>
-                <p>{heim['beschreibung']}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            with st.container(border=True):
+                st.subheader("Beschreibung")
+                st.write(heim["beschreibung"])
 
-            st.markdown(
-                f"""
-                <div class="detail-section">
-                <h4>Kontakt</h4>
-                <p>📧 <a href="mailto:{heim['kontakt_email']}">{heim['kontakt_email']}</a></p>
-                <p>📞 {heim['kontakt_telefon']}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            # Spezialisierungen
+            spez = []
+            if heim.get("traumapaedagogik"):
+                spez.append("Traumapädagogik")
+            if heim.get("psychiatrienahe_betreuung"):
+                spez.append("Psychiatrienahe Betreuung")
+            if heim.get("autismus"):
+                spez.append("Autismus")
+            if heim.get("geistige_behinderung"):
+                spez.append("Geistige Behinderung")
+            if heim.get("koerperliche_einschraenkungen"):
+                spez.append("Körperliche Einschränkungen")
+            if heim.get("sprachunterstuetzung"):
+                spez.append("Sprachunterstützung")
+            if spez:
+                with st.container(border=True):
+                    st.subheader("Spezialisierungen")
+                    st.write(", ".join(spez))
 
-        # -------------------------------------------------------------------
+            with st.container(border=True):
+                st.subheader("Kontakt")
+                st.markdown(f"📧 {heim['kontakt_email']}")
+                st.markdown(f"📞 {heim['kontakt_telefon']}")
+                st.markdown(f"⏰ {heim.get('kontaktzeitfenster', 'Nicht angegeben')}")
+
         # Kontaktformular
-        # -------------------------------------------------------------------
-        st.markdown("---")
+        st.divider()
         st.subheader("Anfrage senden")
 
         with st.form(key="contact_form"):
@@ -300,10 +490,7 @@ if st.session_state.page == "detail" and st.session_state.selected_id is not Non
                 contact_email = st.text_input("Ihre E-Mail-Adresse *")
             with c2:
                 contact_alter = st.number_input(
-                    "Alter des Jugendlichen",
-                    min_value=6,
-                    max_value=25,
-                    value=14,
+                    "Alter des Jugendlichen", min_value=6, max_value=25, value=14,
                 )
                 contact_telefon = st.text_input("Ihre Telefonnummer (optional)")
 
@@ -314,7 +501,6 @@ if st.session_state.page == "detail" and st.session_state.selected_id is not Non
             )
 
             submitted = st.form_submit_button("📨 Anfrage absenden")
-
             if submitted:
                 if not contact_name or not contact_email or not contact_nachricht:
                     st.error("Bitte füllen Sie alle Pflichtfelder (*) aus.")
@@ -338,71 +524,36 @@ else:
     # Metriken
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Einrichtungen", len(df))
-    m2.metric("Freie Plätze gesamt", int(df["freie_plaetze"].sum()))
+    m2.metric("Freie Plätze", int(df["freie_plaetze"].sum()))
     m3.metric("Städte", df["stadt"].nunique())
     m4.metric("Bundesländer", df["bundesland"].nunique())
 
     if df.empty:
-        st.info(
-            "Keine Einrichtungen gefunden. Bitte passen Sie die Filter an."
-        )
+        st.info("Keine Einrichtungen gefunden. Bitte passen Sie die Filter an.")
     else:
-        # Tabs: Kacheln + Karte
         tab_cards, tab_map, tab_table = st.tabs(
             ["📋 Kachelansicht", "🗺️ Kartenansicht", "📊 Tabellenansicht"]
         )
 
-        # -------------------------------------------------------------------
-        # Tab 1: Kachelansicht
-        # -------------------------------------------------------------------
+        # -- Kachelansicht --
         with tab_cards:
-            # Jeweils 3 Kacheln pro Zeile
-            rows = [df.iloc[i : i + 3] for i in range(0, len(df), 3)]
+            if "distance_km" in df.columns and df["distance_km"].notna().any():
+                df_display = df.sort_values("distance_km")
+            else:
+                df_display = df
+
+            rows = [df_display.iloc[i : i + 3] for i in range(0, len(df_display), 3)]
             for row_chunk in rows:
                 cols = st.columns(3)
                 for idx, (_, heim) in enumerate(row_chunk.iterrows()):
                     with cols[idx]:
-                        frei_badge = (
-                            '<span class="badge badge-green">Plätze frei</span>'
-                            if heim["freie_plaetze"] > 0
-                            else '<span class="badge badge-red">Belegt</span>'
-                        )
-                        art_badge = (
-                            f'<span class="badge badge-blue">'
-                            f'{heim["betreuungsart"]}</span>'
-                        )
+                        render_card(heim)
 
-                        st.markdown(
-                            f"""
-                            <div class="card">
-                                <h4>{heim['name']}</h4>
-                                <p>📍 {heim['stadt']}</p>
-                                <p>{heim['bundesland']}</p>
-                                <p>{frei_badge} {art_badge}</p>
-                                <p>🛏️ {heim['freie_plaetze']} freie Plätze</p>
-                                <p>📐 {heim['zimmergroesse_qm']} m²</p>
-                                <p>👤 {heim['alter_min']}–{heim['alter_max']} Jahre</p>
-                                <p>📅 ab {heim['verfuegbar_ab']}</p>
-                                <p>⏱️ {heim['verfuegbar_monate']} Monate</p>
-                            </div>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-                        st.button(
-                            "Details anzeigen",
-                            key=f"btn_{heim['id']}",
-                            on_click=go_to_detail,
-                            args=(heim["id"],),
-                            use_container_width=True,
-                        )
-
-        # -------------------------------------------------------------------
-        # Tab 2: Kartenansicht
-        # -------------------------------------------------------------------
+        # -- Kartenansicht --
         with tab_map:
             center_lat = df["latitude"].mean()
             center_lon = df["longitude"].mean()
-            m = folium.Map(location=[center_lat, center_lon], zoom_start=6)
+            fmap = folium.Map(location=[center_lat, center_lon], zoom_start=6)
 
             for _, heim in df.iterrows():
                 color = "green" if heim["freie_plaetze"] > 0 else "red"
@@ -413,54 +564,45 @@ else:
                     f"Zimmergröße: {heim['zimmergroesse_qm']} m²<br>"
                     f"{heim['betreuungsart']}"
                 )
+                if pd.notna(heim.get("distance_km")):
+                    popup_html += f"<br>Entfernung: {heim['distance_km']:.1f} km"
                 folium.Marker(
                     location=[heim["latitude"], heim["longitude"]],
                     popup=folium.Popup(popup_html, max_width=250),
                     tooltip=heim["name"],
                     icon=folium.Icon(color=color, icon="home", prefix="fa"),
-                ).add_to(m)
+                ).add_to(fmap)
 
-            st_folium(m, width=None, height=550, key="overview_map")
+            st_folium(fmap, width=None, height=550, key="overview_map")
 
-        # -------------------------------------------------------------------
-        # Tab 3: Tabellenansicht
-        # -------------------------------------------------------------------
+        # -- Tabellenansicht --
         with tab_table:
-            display_df = df[
-                [
-                    "name",
-                    "stadt",
-                    "bundesland",
-                    "betreuungsart",
-                    "freie_plaetze",
-                    "zimmergroesse_qm",
-                    "alter_min",
-                    "alter_max",
-                    "verfuegbar_ab",
-                    "verfuegbar_monate",
-                ]
-            ].rename(
-                columns={
-                    "name": "Name",
-                    "stadt": "Stadt",
-                    "bundesland": "Bundesland",
-                    "betreuungsart": "Betreuungsart",
-                    "freie_plaetze": "Freie Plätze",
-                    "zimmergroesse_qm": "Zimmer (m²)",
-                    "alter_min": "Alter min",
-                    "alter_max": "Alter max",
-                    "verfuegbar_ab": "Verfügbar ab",
-                    "verfuegbar_monate": "Dauer (Mon.)",
-                }
-            )
+            cols_show = [
+                "name", "stadt", "bundesland", "betreuungsart",
+                "freie_plaetze", "zimmergroesse_qm",
+                "alter_min", "alter_max", "verfuegbar_ab", "verfuegbar_monate",
+            ]
+            rename = {
+                "name": "Name", "stadt": "Stadt", "bundesland": "Bundesland",
+                "betreuungsart": "Betreuungsart", "freie_plaetze": "Freie Plätze",
+                "zimmergroesse_qm": "Zimmer (m²)", "alter_min": "Alter min",
+                "alter_max": "Alter max", "verfuegbar_ab": "Verfügbar ab",
+                "verfuegbar_monate": "Dauer (Mon.)",
+            }
+            if df["distance_km"].notna().any():
+                cols_show.append("distance_km")
+                rename["distance_km"] = "Entfernung (km)"
+
+            display_df = df[cols_show].rename(columns=rename)
+            if "Entfernung (km)" in display_df.columns:
+                display_df["Entfernung (km)"] = display_df["Entfernung (km)"].apply(
+                    lambda x: f"{x:.1f}" if pd.notna(x) else ""
+                )
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     # Footer
-    st.markdown("---")
-    st.markdown(
-        "<center style='color:grey;font-size:0.85rem;'>"
-        "Jugendheim-Platzvermittlung · Demo-Version · "
+    st.divider()
+    st.caption(
+        f"Jugendheim-Platzvermittlung · Demo-Version · "
         f"Datenstand: {date.today().strftime('%d.%m.%Y')}"
-        "</center>",
-        unsafe_allow_html=True,
     )
