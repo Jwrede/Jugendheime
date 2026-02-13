@@ -86,7 +86,6 @@ def render_card(heim):
         # Details
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown(f"📐 **{heim['zimmergroesse_qm']}** m²")
             st.markdown(f"👤 **{heim['alter_min']}–{heim['alter_max']}** Jahre")
         with c2:
             st.markdown(f"📅 ab **{heim['verfuegbar_ab']}**")
@@ -148,41 +147,47 @@ with st.sidebar:
         use_container_width=True,
     )
 
-    # ===== SCHNELLFILTER =====
+    # =================================================================
+    # SCHNELLFILTER (Verfügbarkeit, Umkreis, Alter, Inobhutnahme)
+    # =================================================================
     st.header("Schnellfilter")
 
-    # -- Verfügbarkeit --
-    nur_frei_jetzt = st.checkbox("Nur freie Plätze", value=True, key="f_frei")
-
+    # 1 – Verfügbarkeit
+    st.caption("Verfügbarkeit")
+    nur_frei_jetzt = st.checkbox("Freie Plätze jetzt", value=True, key="f_frei")
     verfuegbar_ab_filter = st.date_input(
-        "Frei ab", value=None, min_value=date.today(), key="f_ab"
+        "Frei ab Datum", value=None, min_value=date.today(), key="f_ab",
     )
     min_monate = st.slider(
-        "Min. Verfügbarkeit (Monate)", 1,
+        "Reservierbar wie lange (Monate)", 1,
         int(df_all["verfuegbar_monate"].max()), 1, key="f_mon",
     )
 
     st.divider()
 
-    # -- Ort --
+    # 2 – Ort und Erreichbarkeit
+    st.caption("Ort und Erreichbarkeit")
+    umkreis_aktiv = st.checkbox("Umkreis-Suche", key="f_umkr")
+    if umkreis_aktiv:
+        umkreis_km = st.slider("Umkreis (km)", 5, 500, 100, key="f_umkr_km")
+        user_lat = st.number_input("Latitude", value=51.1657, format="%.4f", key="u_lat")
+        user_lon = st.number_input("Longitude", value=10.4515, format="%.4f", key="u_lon")
     bundeslaender = sorted(df_all["bundesland"].unique())
     sel_bundesland = st.multiselect("Bundesland", bundeslaender, key="f_bl")
-
-    # Landkreis abhängig vom gewählten Bundesland
     if sel_bundesland:
-        landkreis_options = sorted(
-            df_all[df_all["bundesland"].isin(sel_bundesland)]["landkreis"]
-            .dropna().unique()
+        lk_opts = sorted(
+            df_all[df_all["bundesland"].isin(sel_bundesland)]["landkreis"].dropna().unique()
         )
     else:
-        landkreis_options = sorted(df_all["landkreis"].dropna().unique())
-    sel_landkreis = st.multiselect("Landkreis", landkreis_options, key="f_lk")
+        lk_opts = sorted(df_all["landkreis"].dropna().unique())
+    sel_landkreis = st.multiselect("Landkreis", lk_opts, key="f_lk")
 
     st.divider()
 
-    # -- Alter --
+    # 3 – Altersbereich
+    st.caption("Altersbereich")
     alter_range = st.slider(
-        "Alter",
+        "Alter (min – max)",
         int(df_all["alter_min"].min()),
         int(df_all["alter_max"].max()),
         (int(df_all["alter_min"].min()), int(df_all["alter_max"].max())),
@@ -191,10 +196,10 @@ with st.sidebar:
 
     st.divider()
 
-    # -- Aufnahmeart --
+    # 4 – Aufnahmeart (Inobhutnahme = prominenter Schnellfilter)
+    st.caption("Aufnahmeart")
     inobhutnahme = st.checkbox("Inobhutnahme geeignet", key="f_inob")
-    krisenplatz = st.checkbox("Krisenplatz", key="f_krise")
-    notaufnahme_24_7 = st.checkbox("Notaufnahme 24/7", key="f_not24")
+    krisenplatz = st.checkbox("Krisenplatz / Notaufnahme 24h", key="f_krise")
     sel_aufnahmeart = st.multiselect(
         "Aufnahmedauer",
         ["kurzfristig", "mittel", "langfristig"],
@@ -203,10 +208,13 @@ with st.sidebar:
 
     st.divider()
 
-    # ===== ERWEITERTE FILTER =====
+    # =================================================================
+    # ERWEITERTE FILTER
+    # =================================================================
     with st.expander("Erweiterte Filter"):
-        # Hilfeform & Setting
-        st.caption("Hilfeform & Setting")
+
+        # 5 – Hilfeform und Setting
+        st.caption("Hilfeform und Setting")
         sel_hilfeform = st.multiselect(
             "Hilfeform",
             ["stationär", "betreute Wohngruppe", "intensivpädagogisch", "betreutes Wohnen"],
@@ -217,7 +225,7 @@ with st.sidebar:
 
         st.divider()
 
-        # Geschlecht
+        # 6 – Geschlecht (optional)
         st.caption("Geschlecht (optional)")
         sel_geschlecht = st.multiselect(
             "Geschlecht",
@@ -227,32 +235,33 @@ with st.sidebar:
 
         st.divider()
 
-        # Ausschluss & Mindestkriterien
-        st.caption("Ausschlusskriterien")
+        # 7 – Ausschluss und Mindestkriterien
+        st.caption("Ausschluss und Mindestkriterien")
         keine_gewalt = st.checkbox("Keine Gewaltproblematik", key="f_kgew")
         keine_sucht = st.checkbox("Keine Suchtthematik", key="f_ksuc")
         schulbesuch = st.checkbox("Schulbesuch möglich", key="f_schul")
         schulformen = sorted(set(
             s for sub in df_all["schulform_unterstuetzung"] for s in sub
         ))
-        sel_schulform = st.multiselect("Schulform", schulformen, key="f_sf")
+        sel_schulform = st.multiselect("Schulform-Unterstützung", schulformen, key="f_sf")
         haustiere = st.checkbox("Haustiere erlaubt", key="f_tier")
 
         st.divider()
 
-        # Spezialisierungen
+        # 8 – Spezialisierungen
         st.caption("Spezialisierungen")
         trauma = st.checkbox("Traumapädagogik", key="f_trau")
         psychiatrie = st.checkbox("Psychiatrienahe Betreuung", key="f_psych")
         autismus_f = st.checkbox("Autismus", key="f_auti")
         geistige_beh = st.checkbox("Geistige Behinderung", key="f_geist")
         koerperlich = st.checkbox("Körperliche Einschränkungen", key="f_koerp")
-        sprachunterstuetzung = st.checkbox("Sprachunterstützung", key="f_sprach")
+        deutschkenntnisse = st.checkbox("Deutschkenntnisse erforderlich", key="f_deutsch")
+        sprachunterstuetzung = st.checkbox("Sprachunterstützung vorhanden", key="f_sprach")
 
         st.divider()
 
-        # Personal
-        st.caption("Personal & Betreuung")
+        # 9 – Betreuungskapazität und Personal
+        st.caption("Betreuungskapazität und Personal")
         eins_zu_eins = st.checkbox("1:1 möglich", key="f_11")
         nachtbereitschaft = st.checkbox("Nachtbereitschaft", key="f_nb")
         nachtdienst = st.checkbox("Nachtdienst", key="f_nd")
@@ -260,33 +269,29 @@ with st.sidebar:
 
         st.divider()
 
-        # Administrativ
-        st.caption("Träger & Einrichtung")
-        traeger_f = st.multiselect(
-            "Träger",
-            ["öffentlich", "frei gemeinnützig", "privat"],
-            key="f_traeg",
-        )
+        # 10 – Administrative Filter
+        st.caption("Administrativ")
         sel_einrichtungstyp = st.multiselect(
             "Einrichtungstyp",
             sorted(df_all["einrichtungstyp"].unique()),
             key="f_etyp",
+        )
+        traeger_f = st.multiselect(
+            "Träger",
+            ["öffentlich", "frei gemeinnützig", "privat"],
+            key="f_traeg",
         )
         platz_bestaetigt = st.selectbox(
             "Platz bestätigt in",
             ["egal", "24 Stunden", "3 Tagen", "7 Tagen"],
             key="f_best",
         )
-
-    # -- Umkreis --
-    with st.expander("Umkreis-Suche"):
-        umkreis_aktiv = st.checkbox("Umkreis aktivieren", key="f_umkr")
-        umkreis_km = st.slider("Umkreis (km)", 5, 500, 100, key="f_umkr_km",
-                               disabled=not umkreis_aktiv)
-        user_lat = st.number_input("Latitude", value=51.1657, format="%.4f",
-                                   key="u_lat", disabled=not umkreis_aktiv)
-        user_lon = st.number_input("Longitude", value=10.4515, format="%.4f",
-                                   key="u_lon", disabled=not umkreis_aktiv)
+        kontaktzeit_opts = sorted(df_all["kontaktzeitfenster"].dropna().unique())
+        sel_kontaktzeit = st.multiselect(
+            "Kontaktzeitfenster",
+            kontaktzeit_opts,
+            key="f_kontakt",
+        )
 
     st.divider()
     if st.button("🔄 Alle Filter zurücksetzen"):
@@ -300,20 +305,18 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 df = df_all.copy()
 
-# Verfügbarkeit
+# 1 – Verfügbarkeit
 if nur_frei_jetzt:
     df = df[df["freie_plaetze_jetzt"]]
 if verfuegbar_ab_filter:
     df = df[df["verfuegbar_ab"] <= verfuegbar_ab_filter]
 df = df[df["verfuegbar_monate"] >= min_monate]
 
-# Ort
+# 2 – Ort und Erreichbarkeit
 if sel_bundesland:
     df = df[df["bundesland"].isin(sel_bundesland)]
 if sel_landkreis:
     df = df[df["landkreis"].isin(sel_landkreis)]
-
-# Umkreis
 if umkreis_aktiv:
     df["distance_km"] = df.apply(
         lambda r: haversine_distance(user_lat, user_lon, r["latitude"], r["longitude"]),
@@ -323,20 +326,18 @@ if umkreis_aktiv:
 else:
     df["distance_km"] = None
 
-# Alter
+# 3 – Altersbereich
 df = df[(df["alter_max"] >= alter_range[0]) & (df["alter_min"] <= alter_range[1])]
 
-# Aufnahmeart
+# 4 – Aufnahmeart
 if inobhutnahme:
     df = df[df["inobhutnahme_geeignet"]]
 if krisenplatz:
-    df = df[df["krisenplatz"]]
-if notaufnahme_24_7:
-    df = df[df["notaufnahme_24_7"]]
+    df = df[df["krisenplatz"] | df["notaufnahme_24_7"]]
 if sel_aufnahmeart:
     df = df[df["aufnahmeart"].apply(lambda x: any(a in x for a in sel_aufnahmeart))]
 
-# Hilfeform & Setting
+# 5 – Hilfeform und Setting
 if sel_hilfeform:
     df = df[df["hilfeform"].apply(lambda x: any(h in x for h in sel_hilfeform))]
 if einzelplatz:
@@ -344,11 +345,11 @@ if einzelplatz:
 if kleingruppe:
     df = df[df["kleingruppe"]]
 
-# Geschlecht
+# 6 – Geschlecht
 if sel_geschlecht:
     df = df[df["geschlecht"].isin(sel_geschlecht)]
 
-# Ausschluss
+# 7 – Ausschluss und Mindestkriterien
 if keine_gewalt:
     df = df[df["keine_gewaltproblematik"]]
 if keine_sucht:
@@ -360,7 +361,7 @@ if sel_schulform:
 if haustiere:
     df = df[df["haustiere_erlaubt"]]
 
-# Spezialisierungen
+# 8 – Spezialisierungen
 if trauma:
     df = df[df["traumapaedagogik"]]
 if psychiatrie:
@@ -371,10 +372,12 @@ if geistige_beh:
     df = df[df["geistige_behinderung"]]
 if koerperlich:
     df = df[df["koerperliche_einschraenkungen"]]
+if deutschkenntnisse:
+    df = df[df["deutschkenntnisse_erforderlich"]]
 if sprachunterstuetzung:
     df = df[df["sprachunterstuetzung"]]
 
-# Personal
+# 9 – Betreuungskapazität und Personal
 if eins_zu_eins:
     df = df[df["eins_zu_eins_moeglich"]]
 if nachtbereitschaft:
@@ -384,17 +387,19 @@ if nachtdienst:
 if deeskalation:
     df = df[df["deeskalationserfahrung"]]
 
-# Administrativ
-if traeger_f:
-    df = df[df["traeger"].isin(traeger_f)]
+# 10 – Administrativ
 if sel_einrichtungstyp:
     df = df[df["einrichtungstyp"].isin(sel_einrichtungstyp)]
+if traeger_f:
+    df = df[df["traeger"].isin(traeger_f)]
 if platz_bestaetigt == "24 Stunden":
     df = df[df["platz_bestaetigt_24h"]]
 elif platz_bestaetigt == "3 Tagen":
     df = df[df["platz_bestaetigt_3d"]]
 elif platz_bestaetigt == "7 Tagen":
     df = df[df["platz_bestaetigt_7d"]]
+if sel_kontaktzeit:
+    df = df[df["kontaktzeitfenster"].isin(sel_kontaktzeit)]
 
 # ---------------------------------------------------------------------------
 # Seiten-Routing
@@ -440,7 +445,6 @@ if st.session_state.page == "detail" and st.session_state.selected_id is not Non
                 st.markdown(f"**Hilfeform:** {', '.join(heim.get('hilfeform', []))}")
                 st.markdown(f"**Freie Plätze:** {heim['freie_plaetze']}  ({'jetzt verfügbar' if heim.get('freie_plaetze_jetzt') else 'nicht sofort'})")
                 st.markdown(f"**Reservierbar:** {'Ja' if heim.get('reservierbar') else 'Nein'}")
-                st.markdown(f"**Zimmergröße:** {heim['zimmergroesse_qm']} m²")
                 st.markdown(f"**Altersgruppe:** {heim['alter_min']}–{heim['alter_max']} Jahre")
                 st.markdown(f"**Geschlecht:** {heim.get('geschlecht', 'offen')}")
                 st.markdown(f"**Verfügbar ab:** {heim['verfuegbar_ab']}")
@@ -487,6 +491,7 @@ if st.session_state.page == "detail" and st.session_state.selected_id is not Non
             c1, c2 = st.columns(2)
             with c1:
                 contact_name = st.text_input("Ihr Name *")
+                contact_organisation = st.text_input("Ihre Organisation (optional)")
                 contact_email = st.text_input("Ihre E-Mail-Adresse *")
             with c2:
                 contact_alter = st.number_input(
@@ -561,7 +566,6 @@ else:
                     f"<b>{heim['name']}</b><br>"
                     f"{heim['stadt']}<br>"
                     f"Freie Plätze: {heim['freie_plaetze']}<br>"
-                    f"Zimmergröße: {heim['zimmergroesse_qm']} m²<br>"
                     f"{heim['betreuungsart']}"
                 )
                 if pd.notna(heim.get("distance_km")):
@@ -579,13 +583,13 @@ else:
         with tab_table:
             cols_show = [
                 "name", "stadt", "bundesland", "betreuungsart",
-                "freie_plaetze", "zimmergroesse_qm",
+                "freie_plaetze",
                 "alter_min", "alter_max", "verfuegbar_ab", "verfuegbar_monate",
             ]
             rename = {
                 "name": "Name", "stadt": "Stadt", "bundesland": "Bundesland",
                 "betreuungsart": "Betreuungsart", "freie_plaetze": "Freie Plätze",
-                "zimmergroesse_qm": "Zimmer (m²)", "alter_min": "Alter min",
+                "alter_min": "Alter min",
                 "alter_max": "Alter max", "verfuegbar_ab": "Verfügbar ab",
                 "verfuegbar_monate": "Dauer (Mon.)",
             }
